@@ -126,14 +126,14 @@ def read_users(role: str, identifier: str = "sn-gn-bd", debug: bool = False) -> 
     users_data = json.load(os.popen(cmd))
 
     for user in users_data:
-        # Формируем уникальный идентификатор
+
         if identifier == "sn-gn-bd":
             user_id = f"{user['surName'].upper()}-{user['givenName'].upper()}-{user['birthDay']}"
         else:
             user_id = str(user.get(identifier, "unknown"))
 
         user_id = user_id.replace(' ', '_')
-        all_users[user_id] = dict(user)  # просто копируем все поля пользователя
+        all_users[user_id] = dict(user)
 
     if debug:
         print("All existing users:")
@@ -216,12 +216,12 @@ def check_attributes(user,line_count):
         return False
     return True
 
-def log_debug(text,obj):
+def log_debug(text, obj, debug=True):
     if debug:
         print(text)
         print(obj)
 
-def close():
+def close(check_password: bool):
     if check_pw:
         os.system("/usr/sbin/crx_api.sh PUT system/configuration/CHECK_PASSWORD_QUALITY/yes")
     else:
@@ -229,7 +229,7 @@ def close():
     os.remove(lockfile)
     log_msg("Import finished","OK")
 
-def close_on_error(msg):
+def close_on_error(msg, check_password: bool):
     if check_pw:
         os.system("/usr/sbin/crx_api.sh PUT system/configuration/CHECK_PASSWORD_QUALITY/yes")
     else:
