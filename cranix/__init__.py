@@ -55,49 +55,10 @@ roles  = []
 for role in os.popen('/usr/sbin/crx_api_text.sh GET groups/text/byType/primary').readlines():
   roles.append(role.strip())
 
-def init(args):
-    global input_file, role, password, identifier, full, test, debug, mustChange
-    global resetPassword, allClasses, cleanClassDirs, appendBirthdayToPassword, appendClassToPassword
-    global import_dir, required_classes, existing_classes, all_users, import_list
-    global fsQuota, fsTeacherQuota, msQuota, msTeacherQuota
 
-    password       = ""
-    fsQuota        = int(os.popen('/usr/sbin/crx_api_text.sh GET system/configuration/FILE_QUOTA').read())
-    fsTeacherQuota = int(os.popen('/usr/sbin/crx_api_text.sh GET system/configuration/FILE_TEACHER_QUOTA').read())
-    msQuota        = int(os.popen('/usr/sbin/crx_api_text.sh GET system/configuration/MAIL_QUOTA').read())
-    msTeacherQuota = int(os.popen('/usr/sbin/crx_api_text.sh GET system/configuration/MAIL_TEACHER_QUOTA').read())
-    #Check if import is running
-    if os.path.isfile(lockfile):
-        close_on_error("Import is already running")
-    os.system("/usr/sbin/crx_api.sh PUT system/configuration/CHECK_PASSWORD_QUALITY/no")
-    import_dir = home_base + "/groups/SYSADMINS/userimports/" + date
-    os.system('mkdir -pm 770 ' + import_dir + '/tmp' )
-    #create lock file
-    with open(lockfile,'w') as f:
-        f.write(date)
-    #write the parameter
-    args_dict=args.__dict__
-    args_dict["startTime"] = date
-    with open(import_dir +'/parameters.json','w') as f:
-        json.dump(args_dict,f,ensure_ascii=False)
-    input_file               = args.input
-    role                     = args.role
-    password                 = args.password
-    identifier               = args.identifier
-    full                     = args.full
-    test                     = args.test
-    debug                    = args.debug
-    mustChange               = args.mustChange
-    resetPassword            = args.resetPassword
-    allClasses               = args.allClasses
-    cleanClassDirs           = args.cleanClassDirs
-    appendBirthdayToPassword = args.appendBirthdayToPassword
-    appendClassToPassword    = args.appendClassToPassword
 
-    existing_classes = read_classes()
-    all_groups = read_groups()
-    all_users = read_users(role=role, identifier=identifier, debug=debug)
-    import_list = read_csv(path=input_file, identifier="sn-gn-bd", debug=False)
+"""-----------------------SOME FUNCTIONS ARE NOW THERE SO THEY CAN BE USED IN INIT FUNCTION--------------------------"""
+
 
 def read_classes() -> list[str]:
 
@@ -191,8 +152,8 @@ def read_csv(path: str, identifier: str = "sn-gn-bd", debug: bool = False) -> di
     return users
 
 
-def check_attributes(user,line_count):
-    #check if all required attributes are there. If not ignore the line
+def check_attributes(user, line_count):
+
     if 'surName' not in user or 'givenName' not in user:
         log_error('Missing required attributes in line {0}.'.format(line_count))
         if debug:
@@ -435,7 +396,7 @@ def delete_class(group):
     if debug:
         print(result)
 
-def write_user_list():
+def _write_user_list():
     file_name = '{0}/all-{1}.txt'.format(import_dir,role)
     with open(file_name, 'w') as fp:
         #TODO Translate header
@@ -470,3 +431,221 @@ def write_user_list():
     #Now we handle AdHocRooms:
     if class_adhoc and role == 'students':
         os.system('/usr/sbin/crx_api.sh PATCH users/moveStudentsDevices')
+
+
+
+"""--------------------------------------------------NEW FUNCTIONS---------------------------------------------------"""
+
+
+
+def remove_unnececary_students(args):
+
+    if args.full and args.role == 'students':
+        for ident in all_users:
+            if not ident in import_list and not all_users[ident]['uid'] in protected_users:
+                del_users.add(ident)
+                log_msg(ident, "User will be deleted")
+                if not args.test:
+                    delete_user(all_users[ident]['uid'])
+
+def proceed_the_user_list(args):
+
+    for ident in import_list:
+        # First we proceed the classes
+
+        old_user = {}
+        new_user = import_list[ident]
+        new_user['role'] = args.role
+        old_classes = []
+        new_classes = []
+
+        if new_user['classes'].upper() == 'ALL':
+            new_classes = existing_classes
+        else:
+            new_classes = new_user['classes'].split()
+
+        if ident in all_users:
+
+            # It is an old user
+
+            old_user = all_users[ident]
+            log_debug("Old user", old_user)
+            new_user['id'] = old_user['id']
+            new_user['uid'] = old_user['uid']
+            old_classes = old_user['classes'].split(',')
+
+            if old_user['classes'] != new_user['classes']:
+                moved_users.add(ident)
+            else:
+                stand_users.add(ident)
+
+            log_debug("Old user", old_user)
+            log_msg(ident, "Old user. Old classes: " + old_user['classes'] + " New Classes:" + new_user['classes'])
+
+            if not args.test:
+                if args.resetPassword:
+
+                    password = args.password
+                    if 'password' in import_list[ident]:
+                        password = import_list[ident]['password']
+
+                    if password == "":
+                        password = create_secure_pw(8)
+
+                    if args.appendBirthdayToPassword:
+                        password = password + old_user['birthDay']
+
+                    if args.appendClassToPassword and len(new_classes) > 0:
+                        password = password + new_classes[0]
+
+                    old_user['password'] = password
+                    import_list[ident]['password'] = password
+                    old_user['mustChange'] = args.mustChange
+
+                modify_user(old_user, ident)
+        else:
+
+            new_users.add(ident)
+            log_debug("New user", new_user)
+            log_msg(ident, "New user. Classes:" + new_user['classes'])
+
+            if not args.test:
+                if not add_user(new_user, ident):
+                    continue
+
+            else:
+                # Test if uid and password are ok if given
+                if 'uid' in new_user:
+                    res = check_uid(new_user['uid'])
+                    if len(res) > 0:
+                        log_error(res)
+
+                if 'password' in new_user and new_user['password'] != "":
+                    res = check_password(new_user['password'])
+                    if len(res) > 0:
+                        log_error(res)
+
+        # trate classes
+        for cl in new_classes:
+            if cl == '' or cl.isspace():
+                continue
+            log_debug("  Class:", cl)
+            if cl not in required_classes:
+                required_classes.append(cl)
+
+            if cl not in existing_classes:
+                new_groups.add(cl)
+                log_msg(cl, "New class")
+
+                if not args.test:
+                    add_class(cl)
+
+        if not args.test:
+            move_user(new_user['uid'], old_classes, new_classes)
+
+        # trate groups
+        if 'group' in import_list[ident]:
+            for gr in import_list[ident]['group'].split():
+                if gr.upper() not in all_groups:
+
+                    new_groups.add(gr)
+                    log_msg(gr, "New group")
+
+                    if not args.test:
+                        add_group(gr)
+
+                log_msg(gr, "Add user to group")
+                if not args.test:
+
+                    cmd = '/usr/sbin/oss_api_text.sh PUT users/text/{0}/groups/{1}'.format(new_user['uid'], gr)
+                    if args.debug:
+                        print(cmd)
+                    result = os.popen(cmd).read()
+                    if args.debug:
+                        print(result)
+
+def _write_user_list(args):
+
+    if args.debug:
+
+        print('Resulted user list')
+        print(import_list)
+
+    if not args.test:
+        write_user_list()
+
+    if not args.test and args.cleanClassDirs:
+
+        for c in existing_classes:
+            os.system('/usr/sbin/crx_clean_group_directory.sh "{0}"'.format(c.upper()))
+
+def delete_unnecessary_classes(args):
+
+    if args.allClasses:
+
+        for c in existing_classes:
+            if not c in required_classes:
+
+                log_msg(c, "Class will be deleted")
+                del_groups.add(c)
+
+                if not args.test:
+                    delete_class(c)
+
+        read_classes()
+
+
+
+"""--------------------------------------------------INIT FUNCTION---------------------------------------------------"""
+
+
+
+def init(args):
+    global input_file, role, password, identifier, full, test, debug, mustChange
+    global resetPassword, allClasses, cleanClassDirs, appendBirthdayToPassword, appendClassToPassword
+    global import_dir, required_classes, existing_classes, all_users, import_list
+    global fsQuota, fsTeacherQuota, msQuota, msTeacherQuota
+
+    password       = ""
+    fsQuota        = int(os.popen('/usr/sbin/crx_api_text.sh GET system/configuration/FILE_QUOTA').read())
+    fsTeacherQuota = int(os.popen('/usr/sbin/crx_api_text.sh GET system/configuration/FILE_TEACHER_QUOTA').read())
+    msQuota        = int(os.popen('/usr/sbin/crx_api_text.sh GET system/configuration/MAIL_QUOTA').read())
+    msTeacherQuota = int(os.popen('/usr/sbin/crx_api_text.sh GET system/configuration/MAIL_TEACHER_QUOTA').read())
+    #Check if import is running
+    if os.path.isfile(lockfile):
+        close_on_error("Import is already running")
+    os.system("/usr/sbin/crx_api.sh PUT system/configuration/CHECK_PASSWORD_QUALITY/no")
+    import_dir = home_base + "/groups/SYSADMINS/userimports/" + date
+    os.system('mkdir -pm 770 ' + import_dir + '/tmp' )
+    #create lock file
+    with open(lockfile,'w') as f:
+        f.write(date)
+    #write the parameter
+    args_dict=args.__dict__
+    args_dict["startTime"] = date
+    with open(import_dir +'/parameters.json','w') as f:
+        json.dump(args_dict,f,ensure_ascii=False)
+    input_file               = args.input
+    role                     = args.role
+    password                 = args.password
+    identifier               = args.identifier
+    full                     = args.full
+    test                     = args.test
+    debug                    = args.debug
+    mustChange               = args.mustChange
+    resetPassword            = args.resetPassword
+    allClasses               = args.allClasses
+    cleanClassDirs           = args.cleanClassDirs
+    appendBirthdayToPassword = args.appendBirthdayToPassword
+    appendClassToPassword    = args.appendClassToPassword
+
+    existing_classes = read_classes()
+    all_groups = read_groups()
+    all_users = read_users(role=role, identifier=identifier, debug=debug)
+    import_list = read_csv(path=input_file, identifier="sn-gn-bd", debug=False)
+
+    #FUCNTIONS FROM USERS IMPORT
+    remove_unnececary_students(args)
+    proceed_the_user_list(args)
+    write_user_list(args)
+    delete_unnecessary_classes(args)
