@@ -5,9 +5,16 @@ import random
 import re
 import string
 
+try:
+    from _logger import Logger
+except:
+    from . import _logger
+    from ._logger import Logger
+
 from typing import Dict, Any
 from subprocess import run, PIPE
 
+logger = Logger()
 valid_uid = re.compile(r"^[a-zA-Z0-9]+[a-zA-Z0-9\.\-\_]*[a-zA-Z0-9]$")
 
 
@@ -19,8 +26,7 @@ def add_user(user):
     with open(file_name, 'w') as fp:
         json.dump(user, fp, ensure_ascii=False)
     result = json.load(os.popen('/usr/sbin/crx_api_post_file.sh users/insert ' + file_name))
-    if debug:
-        print(result)
+    logger.debug(result)
     if result['code'] == 'ERROR':
         log_error(result['value'])
     return result
@@ -30,8 +36,7 @@ def modify_user(user):
     with open(file_name, 'w') as fp:
         json.dump(user, fp, ensure_ascii=False)
     result = json.load(os.popen('/usr/sbin/crx_api_post_file.sh users/{0} "{1}" '.format(user['id'],file_name)))
-    if debug:
-        print(result)
+    logger.debug(result)
     if result['code'] == 'ERROR':
         log_error(result['value'])
     return result
@@ -41,32 +46,26 @@ def move_user(user, old_classes, new_classes, debug: bool = False, cleanClassDir
     if not cleanClassDirs and user['role'] == 'students':
         if len(old_classes) > 0 and len(new_classes) > 0 and old_classes[0] != new_classes[0]:
             cmd = '/usr/share/cranix/tools/move_user_class_files.sh "{0}" "{1}" "{2}"'.format(uid,old_classes[0],new_classes[0])
-            if debug:
-                print(cmd)
+            logger.debug(cmd)
             result = os.popen(cmd).read()
-            if debug:
-                print(result)
+            logger.debug(result)
 
     for g in old_classes:
        if g == '' or g.isspace():
             continue
        if not g in new_classes:
            cmd = '/usr/sbin/crx_api_text.sh DELETE "users/text/{0}/groups/{1}"'.format(uid,g)
-           if debug:
-               print(cmd)
+           logger.debug(cmd)
            result = os.popen(cmd).read()
-           if debug:
-               print(result)
+           logger.debug(result)
     for g in new_classes:
        if g == '' or g.isspace():
             continue
        if not g in old_classes:
            cmd = '/usr/sbin/crx_api_text.sh PUT "users/text/{0}/groups/{1}"'.format(uid,g)
-           if debug:
-               print(cmd)
+           logger.debug(cmd)
            result = os.popen(cmd).read()
-           if debug:
-               print(result)
+           logger.debug(result)
 
 def delete_user(user, debug: bool = False):
     cmd = '/usr/sbin/crx_api_text.sh DELETE "users/text/{0}"'.format(user['uid'])
